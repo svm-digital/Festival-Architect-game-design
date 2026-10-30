@@ -1,25 +1,27 @@
-import { FACILITY_DEFS, GENRES } from '../model/catalog';
+import { FACILITY_DEFS, GENRES, isPost } from '../model/catalog';
 import { accessTile, audienceZone, centerTile, tileIndex } from '../model/grid';
 import { buildWalkGrid, validateForSimulation } from '../model/reachability';
 import { festivalEndTick, TICKS_PER_MINUTE, totalTicks } from './clock';
 import { createMetrics, sampleMetrics } from './metrics';
-import { costField } from './pathfinding';
+import { costField, uniformWalk } from './pathfinding';
 import { updateQueues } from './queues';
 import { createRng, nextFloat, nextRange, pick } from './rng';
 import { RULES } from './rules';
-import type { FacilityRuntime, SimulationInput, SimulationState, Visitor } from './types';
-import { onServed, startLeaving, updateNeeds, updateVisitor } from './visitors';
+import { spawnIncidents, updateIncidents } from './incidents';
+import type { FacilityRuntime, SimulationInput, SimulationState, StaffMember, Visitor } from './types';
+import { makeOnServed, startLeaving, updateNeeds, updateVisitor } from './visitors';
 
 export class SimulationSetupError extends Error {}
 
 export function createSimulation(input: SimulationInput): SimulationState {
   const { layout, program, scenario, seed } = input;
-  const validation = validateForSimulation(layout, program, scenario);
+  const validation = validateForSimulation(layout, program, scenario, input.capitalStart);
   if (!validation.ok) {
     const errors = validation.issues.filter((i) => i.severity === 'error').map((i) => i.message);
     throw new SimulationSetupError(errors.join(' '));
   }
   const walk = buildWalkGrid(layout);
+  const staffWalk = uniformWalk(walk);
   const analysis = validation.analysis;
   const grid = layout.grid;
   const entrance = layout.facilities.find((f) => f.type === 'entrance')!;
@@ -64,15 +66,44 @@ export function createSimulation(input: SimulationInput): SimulationState {
       queue: [],
       serving: [],
       occupants: [],
-      field: reachable ? costField(walk, at) : null,
+      field: reachable ? costField(isPost(f.type) ? staffWalk : walk, at) : null,
       audienceTiles,
+      staffIds: [],
     };
     facilityOrder.push(f.id);
     if (f.type === 'stage') stageIds.push(f.id);
   }
 
+  // Hulpmedewerkers starten op de toegangstegel van hun post.
+  const staff: StaffMember[] = [];
+  for (const id of facilityOrder) {
+    const fac = facilities[id];
+    if (!isPost(fac.type)) continue;
+    const ax = (fac.accessTile % grid.width) + 0.5;
+    const ay = Math.floor(fac.accessTile / grid.width) + 0.5;
+    for (let k = 0; k < fac.capacity; k++) {
+      fac.staffIds.push(staff.length);
+      staff.push({
+        id: staff.length,
+        postId: id,
+        kind: fac.type,
+        state: 'idle',
+        x: ax,
+        y: ay,
+        prevX: ax,
+        prevY: ay,
+        tile: fac.accessTile,
+        path: [],
+        pathIndex: 0,
+        incidentId: null,
+        timer: 0,
+        busyTicks: 0,
+      });
+    }
+  }
+
   const rng = createRng(seed);
-  const count = Math.max(0, Math.min(scenario.visitorCount, scenario.maxVisitors));
+  const count = Math.max(0, Math.min(input.demand.visitors, scenario.maxVisitors));
   const visitors: Visitor[] = [];
   const S = RULES.start;
   for (let id = 0; id < count; id++) {
@@ -92,6 +123,7 @@ export function createSimulation(input: SimulationInput): SimulationState {
       path: [],
       pathIndex: 0,
       hunger: nextRange(rng, S.hunger[0], S.hunger[1]),
+      thirst: nextRange(rng, S.thirst[0], S.thirst[1]),
       toilet: nextRange(rng, S.toilet[0], S.toilet[1]),
       energy: nextRange(rng, S.energy[0], S.energy[1]),
       satisfaction: S.satisfaction,
@@ -102,6 +134,8 @@ export function createSimulation(input: SimulationInput): SimulationState {
       avoidUntilTick: 0,
       unmetNeeds: [],
       needsDecision: false,
+      boughtMerch: false,
+      incidentId: null,
       leftEarly: false,
       exitTick: null,
     });
@@ -114,6 +148,7 @@ export function createSimulation(input: SimulationInput): SimulationState {
     totalTicks: totalTicks(scenario),
     rng,
     walk,
+    staffWalk,
     analysis,
     entranceId: entrance.id,
     gateTile,
@@ -125,6 +160,8 @@ export function createSimulation(input: SimulationInput): SimulationState {
     facilityOrder,
     stageIds,
     visitors,
+    staff,
+    incidents: [],
     metrics: createMetrics(grid.width * grid.height, facilityOrder, stageIds),
     finished: false,
   };
@@ -153,13 +190,19 @@ export function step(s: SimulationState): void {
   // 3. Behoeften
   for (const v of s.visitors) if (v.phase === 'onSite') updateNeeds(v);
 
-  // 4. Wachtrijen
-  updateQueues(s, onServed);
+  // 4. Nieuwe incidenten (één trekking per bezoeker per spelminuut)
+  spawnIncidents(s);
 
-  // 5. Gedrag
+  // 5. Wachtrijen
+  updateQueues(s, makeOnServed(s));
+
+  // 6. Gedrag
   for (const v of s.visitors) if (v.phase === 'onSite') updateVisitor(s, v);
 
-  // 6. Statistiek
+  // 7. Hulpmedewerkers en incidenten
+  updateIncidents(s);
+
+  // 8. Statistiek
   sampleMetrics(s);
 
   s.tick += 1;
@@ -191,9 +234,17 @@ export function hashState(s: SimulationState): string {
     mix(Math.round(v.y * 1000));
     mix(Math.round(v.satisfaction * 1000));
     mix(Math.round(v.hunger * 1000));
+    mix(Math.round(v.thirst * 1000));
     mix(Math.round(v.toilet * 1000));
     mix(Math.round(v.energy * 1000));
   }
+  for (const st of s.staff) {
+    mix(Math.round(st.x * 1000));
+    mix(Math.round(st.y * 1000));
+    mix(st.busyTicks);
+  }
+  mix(s.incidents.length);
+  mix(s.metrics.sales.food * 7 + s.metrics.sales.bar * 13 + s.metrics.sales.merch * 31);
   for (const sm of s.metrics.samples) {
     mix(sm.onSite);
     mix(sm.peakCount);

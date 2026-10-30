@@ -7,12 +7,11 @@ export const DEFAULT_SEED = 2026;
 export const COMPACT_SCENARIO: ScenarioSettings = {
   id: 'compact-festival',
   title: 'Compact festival',
-  goal: 'Ontwerp een compact festival binnen het beschikbare budget.',
+  goal: 'Bouw over meerdere edities een compact festival dat bezoekers tevreden houdt en geld oplevert.',
   gridWidth: 32,
   gridHeight: 24,
-  budget: 60000,
-  pathTileCost: 50,
-  visitorCount: 150,
+  startCapital: 10000,
+  pathTileCost: 5,
   maxVisitors: 150,
   festivalMinutes: 240,
   exitWindowMinutes: 30,
@@ -75,13 +74,13 @@ export function createEmptyLayout(s: ScenarioSettings): FestivalLayout {
 }
 
 /**
- * Een speelbaar voorbeeldontwerp binnen budget. Bedoeld als startpunt en voor tests;
+ * Een speelbaar voorbeeldontwerp binnen het startkapitaal. Bedoeld als startpunt en voor tests;
  * het is geen aanbevolen of 'optimaal' ontwerp.
  */
 export function createExampleDesign(s: ScenarioSettings): { layout: FestivalLayout; program: Program } {
   let layout = createEmptyLayout(s);
   const place = (type: FacilityType, x: number, y: number, facing: Facing) => {
-    const r = placeFacility(layout, s, { type, x, y, facing });
+    const r = placeFacility(layout, s, { type, x, y, facing }, s.startCapital);
     if (!r.facility) throw new Error(`Voorbeeldontwerp ongeldig bij ${type}: ${r.result.reasons.join(' ')}`);
     layout = r.layout;
     return r.facility;
@@ -95,6 +94,12 @@ export function createExampleDesign(s: ScenarioSettings): { layout: FestivalLayo
   place('food', 21, 10, 'south');
   place('seating', 3, 13, 'north');
   place('seating', 26, 9, 'south');
+  place('bar', 16, 15, 'west');
+  place('bar', 20, 6, 'south');
+  place('merch', 12, 15, 'east');
+  place('firstaid', 17, 18, 'west');
+  place('security', 12, 20, 'east');
+  place('awareness', 20, 17, 'west');
 
   const tiles = layout.grid.tiles.slice();
   const path = (x: number, y: number) => {

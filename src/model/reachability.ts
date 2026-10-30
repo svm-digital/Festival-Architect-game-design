@@ -1,5 +1,5 @@
-import { FACILITY_DEFS } from './catalog';
-import { computeSpent } from './budget';
+import { lowerLabel } from './catalog';
+import { fixedCosts } from './economy';
 import { accessTile, buildOccupancy, inBounds, NEIGHBOR_OFFSETS, tileIndex } from './grid';
 import type { Facility, FestivalLayout, ObstacleKind, Program, ScenarioSettings, TileType } from './types';
 
@@ -179,6 +179,8 @@ export function validateForSimulation(
   layout: FestivalLayout,
   program: Program,
   scenario: ScenarioSettings,
+  /** Beschikbaar kapitaal voor deze editie. */
+  capital: number,
 ): SimulationValidation {
   const analysis = analyzeReachability(layout);
   const issues: ValidationIssue[] = [];
@@ -191,8 +193,13 @@ export function validateForSimulation(
   else if (analysis.entranceId && !stages.some((s) => analysis.facilities[s.id].reachable)) {
     err('no-reachable-stage', 'Geen enkel podium is bereikbaar vanaf de ingang. Zonder bereikbaar podium kan de simulatie niet starten.');
   }
-  const spent = computeSpent(layout, scenario);
-  if (spent > scenario.budget) err('over-budget', `Het ontwerp kost € ${spent.toLocaleString('nl-NL')}, meer dan het budget.`);
+  const costs = fixedCosts(layout, program, scenario);
+  if (costs > capital) {
+    err(
+      'over-budget',
+      `Huur en gages kosten samen € ${costs.toLocaleString('nl-NL')}, maar er is maar € ${Math.max(0, capital).toLocaleString('nl-NL')} kapitaal.`,
+    );
+  }
 
   if (analysis.entranceId) {
     for (const f of layout.facilities) {
@@ -200,9 +207,14 @@ export function validateForSimulation(
       if (!r.reachable && f.type !== 'entrance' && r.explanation) warn('unreachable', r.explanation, f.id);
     }
   }
-  for (const type of ['food', 'toilet'] as const) {
+  for (const type of ['food', 'bar', 'toilet'] as const) {
     if (!layout.facilities.some((f) => f.type === type)) {
-      warn(`no-${type}`, `Er is geen ${FACILITY_DEFS[type].label.toLowerCase()}. Bezoekers met die behoefte vinden geen doel.`);
+      warn(`no-${type}`, `Er is geen ${lowerLabel(type)}. Bezoekers met die behoefte vinden geen doel.`);
+    }
+  }
+  for (const type of ['firstaid', 'security', 'awareness'] as const) {
+    if (!layout.facilities.some((f) => f.type === type)) {
+      warn(`no-${type}`, `Er is geen ${lowerLabel(type)}. Incidenten van dat type worden niet opgevangen.`);
     }
   }
   const stageIds = new Set(stages.map((s) => s.id));

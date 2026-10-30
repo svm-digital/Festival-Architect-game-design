@@ -1,3 +1,4 @@
+import { hasQueue } from '../model/catalog';
 import type { FacilityRuntime, SimulationState, Visitor } from './types';
 
 /** Bezoeker sluit achteraan aan bij de wachtrij op de toegangstegel. */
@@ -24,7 +25,7 @@ export function removeFromFacility(s: SimulationState, v: Visitor): void {
 }
 
 /**
- * Eén tick wachtrijlogica voor eetkramen en toiletten:
+ * Eén tick wachtrijlogica voor alle voorzieningen met een wachtrij (eten, bar, toilet, merchandise):
  * 1. bediening aftellen, klaar → `onServed`;
  * 2. vrije plekken vullen vanaf de voorkant van de rij.
  */
@@ -34,17 +35,18 @@ export function updateQueues(
 ): void {
   for (const id of s.facilityOrder) {
     const fac = s.facilities[id];
-    if (fac.type !== 'food' && fac.type !== 'toilet') continue;
+    if (!hasQueue(fac.type)) continue;
     const done: number[] = [];
     for (const slot of fac.serving) {
       slot.remaining -= 1;
       if (slot.remaining <= 0) done.push(slot.visitorId);
     }
+    const stats = s.metrics.facility[id];
     if (done.length > 0) {
       fac.serving = fac.serving.filter((slot) => slot.remaining > 0);
+      stats.completed += done.length;
       for (const vid of done) onServed(s.visitors[vid], fac);
     }
-    const stats = s.metrics.facility[id];
     while (fac.serving.length < fac.capacity && fac.queue.length > 0) {
       const vid = fac.queue.shift()!;
       const v = s.visitors[vid];

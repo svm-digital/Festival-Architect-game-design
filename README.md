@@ -1,8 +1,9 @@
 # Festival Architect
 
-Fictieve browsergame: ontwerp een klein festivalterrein, stel een programma samen en
-laat een vereenvoudigde bezoekerssimulatie draaien. Lees het rapport, pas het ontwerp
-aan en simuleer opnieuw met dezelfde seed.
+Fictieve browsergame: organiseer een klein festival over meerdere edities. Ontwerp het
+terrein, kies programma en ticketprijs, laat een vereenvoudigde bezoekerssimulatie draaien
+en lees het rapport met afrekening. Winst of verlies schuift door naar de volgende editie;
+vergelijk de edities om te zien of je het beter hebt gedaan.
 
 > Alle uitkomsten komen uit een vereenvoudigd spelmodel. Dit is geen crowd-safetytool,
 > geen evenementenadvies en doet geen uitspraken over veilige bezoekerscapaciteit.
@@ -14,23 +15,26 @@ npm install
 npm run dev        # ontwikkelserver op http://localhost:5173
 npm run typecheck
 npm run lint
-npm test           # Vitest, 45 tests
+npm test           # Vitest, 61 tests
 npm run build      # productiebuild in dist/
 ```
 
 ## Spelen
 
-1. **Terrein** — plaats een ingang op de rand, één of twee podia, eetkramen, toiletten
-   en zitgebieden; teken paden. `R` draait de toegang, `Esc` stopt een gereedschap,
-   `Del` verwijdert de selectie. Rood = ongeldig, met de reden in het paneel.
-   "Voorbeeldontwerp" laadt een speelbaar startpunt.
-2. **Programma** — kies per podium en tijdslot een fictieve act; stel seed en aantal
-   bezoekers (max. 150) in.
+1. **Terrein** — ingang op de rand, één of twee podia, eetkramen, bars, toiletten,
+   zitgebieden, merchandise en hulpposten (EHBO, beveiliging, awareness); paden tekenen.
+   `R` draait de toegang, `Esc` stopt een gereedschap, `Del` verwijdert de selectie.
+   De dekkingslaag toont de aanlooptijd vanaf hulpposten. "Voorbeeldontwerp" laadt een startpunt.
+2. **Programma** — ticketprijs (bepaalt het aantal bezoekers), acts per podium en tijdslot
+   (gage hangt af van populariteit), seed. Kies "Proefrun" om uit te proberen of
+   "Editie N draaien" om de editie vast te leggen.
 3. **Simulatie** — start, pauze, 1×/2×/4×, reset. Het terrein is vergrendeld.
-4. **Rapport** — wachttijden, podia, piekmomenten, onbereikbare en onderbenutte
-   voorzieningen, budget en verbeterpunten.
+4. **Rapport** — verbeterpunten, afrekening, wachttijden, meldingen, podia, met verschillen
+   ten opzichte van de vorige editie.
+5. **Edities** — alle edities, verloop van kapitaal en tevredenheid, twee edities vergelijken,
+   een eerder ontwerp terugzetten of een nieuwe reeks starten.
 
-Opslaan gebeurt in IndexedDB in je eigen browser. Een lopende simulatie wordt niet
+De reeks wordt in IndexedDB in je eigen browser bewaard. Een lopende simulatie wordt niet
 opgeslagen.
 
 ## Documentatie

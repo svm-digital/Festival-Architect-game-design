@@ -12,7 +12,20 @@ export interface TileGrid {
   obstacleKinds: (ObstacleKind | null)[];
 }
 
-export type FacilityType = 'entrance' | 'stage' | 'food' | 'toilet' | 'seating';
+export type FacilityType =
+  | 'entrance'
+  | 'stage'
+  | 'food'
+  | 'bar'
+  | 'toilet'
+  | 'seating'
+  | 'merch'
+  | 'firstaid'
+  | 'security'
+  | 'awareness';
+
+/** Hulpposten met medewerkers die op incidenten afgaan. */
+export type PostType = 'firstaid' | 'security' | 'awareness';
 
 /** Kant van de footprint waar de toegangstegel ligt. */
 export type Facing = 'south' | 'west' | 'north' | 'east';
@@ -71,9 +84,9 @@ export interface ScenarioSettings {
   goal: string;
   gridWidth: number;
   gridHeight: number;
-  budget: number;
+  /** Kapitaal bij de start van editie 1. */
+  startCapital: number;
   pathTileCost: number;
-  visitorCount: number;
   maxVisitors: number;
   festivalMinutes: number;
   exitWindowMinutes: number;

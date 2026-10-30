@@ -1,4 +1,4 @@
-import { FACILITY_DEFS } from './catalog';
+import { FACILITY_DEFS, lowerLabel } from './catalog';
 import {
   accessTile,
   buildOccupancy,
@@ -72,6 +72,8 @@ export function validatePlacement(
   layout: FestivalLayout,
   scenario: ScenarioSettings,
   candidate: FacilityShape,
+  /** Beschikbaar voor huur van voorzieningen en paden (kapitaal min gages). */
+  budget: number,
 ): PlacementResult {
   const def = FACILITY_DEFS[candidate.type];
   const grid = layout.grid;
@@ -85,8 +87,8 @@ export function validatePlacement(
   if (def.maxCount !== null && sameType >= def.maxCount) {
     reasons.push(
       def.maxCount === 1
-        ? `Er is al een ${def.label.toLowerCase()}; er kan er maar één zijn.`
-        : `Maximaal ${def.maxCount} × ${def.label.toLowerCase()} toegestaan.`,
+        ? `Er is al een ${lowerLabel(candidate.type)}; er kan er maar één zijn.`
+        : `Maximaal ${def.maxCount} × ${lowerLabel(candidate.type)} toegestaan.`,
     );
   }
 
@@ -137,7 +139,7 @@ export function validatePlacement(
   }
 
   // Budget
-  const remaining = scenario.budget - computeSpent(layout, scenario);
+  const remaining = budget - computeSpent(layout, scenario);
   if (def.cost > remaining) {
     reasons.push(`Te duur: kost ${formatShort(def.cost)}, nog ${formatShort(remaining)} beschikbaar.`);
   }
@@ -155,6 +157,7 @@ export function validatePathPaint(
   scenario: ScenarioSettings,
   x: number,
   y: number,
+  budget: number,
 ): PathPaintResult {
   const grid = layout.grid;
   if (!inBounds(grid, x, y)) return { ok: false, reason: 'Buiten het terrein.' };
@@ -163,7 +166,7 @@ export function validatePathPaint(
   if (grid.tiles[i] === 'obstacle') return { ok: false, reason: 'Op een obstakel kan geen pad.' };
   const occ = buildOccupancy(grid, layout.facilities);
   if (occ[i] >= 0) return { ok: false, reason: `Onder ${layout.facilities[occ[i]].name} kan geen pad.` };
-  const remaining = scenario.budget - computeSpent(layout, scenario);
+  const remaining = budget - computeSpent(layout, scenario);
   if (scenario.pathTileCost > remaining) return { ok: false, reason: 'Onvoldoende budget voor nog een padtegel.' };
   return { ok: true, reason: null };
 }

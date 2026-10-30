@@ -1,3 +1,4 @@
+import { computeDemand } from '../src/model/economy';
 import { tileIndex } from '../src/model/grid';
 import { placeFacility } from '../src/model/layout';
 import { COMPACT_SCENARIO, createEmptyLayout, createExampleDesign, DEFAULT_SEED } from '../src/model/scenario';
@@ -5,18 +6,33 @@ import type { Facing, FacilityType, FestivalLayout, ObstacleKind, Program, Scena
 import type { SimulationInput } from '../src/sim/types';
 
 export const S: ScenarioSettings = COMPACT_SCENARIO;
+/** Ruim budget voor plaatsingstests die niet over geld gaan. */
+export const BIG = 1_000_000;
 
 export function example(): { layout: FestivalLayout; program: Program } {
   return createExampleDesign(S);
 }
 
-export function exampleInput(overrides: Partial<SimulationInput> = {}): SimulationInput {
+export function exampleInput(
+  overrides: Partial<Omit<SimulationInput, 'demand'>> & { ticketPrice?: number; visitors?: number } = {},
+): SimulationInput {
   const { layout, program } = example();
-  return { layout, program, scenario: S, seed: DEFAULT_SEED, ...overrides };
+  const { ticketPrice = 35, visitors, ...rest } = overrides;
+  const prog = rest.program ?? program;
+  const demand = computeDemand(S, prog, ticketPrice, null);
+  return {
+    layout,
+    program: prog,
+    scenario: S,
+    seed: DEFAULT_SEED,
+    capitalStart: S.startCapital,
+    ...rest,
+    demand: visitors === undefined ? demand : { ...demand, visitors },
+  };
 }
 
-export function place(layout: FestivalLayout, type: FacilityType, x: number, y: number, facing: Facing = 'south'): FestivalLayout {
-  const r = placeFacility(layout, S, { type, x, y, facing });
+export function place(layout: FestivalLayout, type: FacilityType, x: number, y: number, facing: Facing = 'south', budget = BIG): FestivalLayout {
+  const r = placeFacility(layout, S, { type, x, y, facing }, budget);
   if (!r.facility) throw new Error(`Plaatsing mislukt: ${r.result.reasons.join(' ')}`);
   return r.layout;
 }

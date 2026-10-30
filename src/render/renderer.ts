@@ -11,9 +11,9 @@ import {
   type FacilityShape,
 } from '../model/grid';
 import type { ReachabilityAnalysis } from '../model/reachability';
-import type { Facility, Facing, FestivalLayout, Point } from '../model/types';
+import type { Facility, Facing, FestivalLayout, Point, PostType } from '../model/types';
 import { activePerformance, tickToMinute } from '../sim/clock';
-import type { SimulationState, Visitor } from '../sim/types';
+import type { IncidentKind, SimulationState, Visitor } from '../sim/types';
 
 export interface RenderOverlays {
   reachability: boolean;
@@ -37,6 +37,8 @@ export interface RenderInput {
   showAccess: boolean;
   /** Middentegel van een 3×3-vak dat uitgelicht wordt (piekmoment in rapport). */
   highlightTile: number | null;
+  /** Dekkingslaag: aanlooptijd in minuten vanaf de dichtstbijzijnde hulppost van één type. */
+  coverage: { kind: PostType; minutes: Float32Array } | null;
 }
 
 const C = {
@@ -80,12 +82,14 @@ export function renderScene(ctx: CanvasRenderingContext2D, input: RenderInput): 
   ctx.clearRect(0, 0, grid.width * ts, grid.height * ts);
 
   drawGround(ctx, input);
+  if (input.coverage) drawCoverage(ctx, input);
   if (input.overlays.zones || input.selectedId || input.facilityPreview?.shape.type === 'stage') drawZones(ctx, input);
   for (const f of layout.facilities) drawFacility(ctx, input, f);
   if (input.showAccess) for (const f of layout.facilities) drawAccess(ctx, ts, accessTile(f), f.facing, 'rgba(255,255,255,0.75)');
   if (input.overlays.reachability && input.analysis) drawReachability(ctx, input);
   if (input.overlays.heatmap && input.heat) drawHeat(ctx, input);
   if (input.sim) drawVisitors(ctx, input, input.sim);
+  if (input.sim) drawStaff(ctx, input, input.sim);
   drawSelection(ctx, input);
   drawPreview(ctx, input);
   ctx.restore();
@@ -270,6 +274,17 @@ function drawFacility(ctx: CanvasRenderingContext2D, input: RenderInput, f: Faci
       break;
     case 'seating':
       drawSeating(ctx, inset, f.facing, ts);
+      break;
+    case 'bar':
+      drawBar(ctx, inset, f.facing, ts);
+      break;
+    case 'merch':
+      drawMerch(ctx, inset, f.facing, ts);
+      break;
+    case 'firstaid':
+    case 'security':
+    case 'awareness':
+      drawPost(ctx, inset, f.type, ts);
       break;
   }
 }
@@ -456,6 +471,158 @@ function drawSeating(ctx: CanvasRenderingContext2D, b: Box, facing: Facing, ts: 
       ctx.fillRect(p.x + ts * 0.32, p.y - ts * 0.35, ts * 0.1, ts * 0.7);
     }
   }
+}
+
+function drawBar(ctx: CanvasRenderingContext2D, b: Box, facing: Facing, ts: number): void {
+  ctx.fillStyle = '#5b3a24';
+  roundRect(ctx, b.x, b.y, b.w, b.h, 3);
+  ctx.fill();
+  // Bar-toog aan de voorkant
+  const counter = frontStrip(b, facing, ts * 0.45);
+  ctx.fillStyle = '#b7791f';
+  ctx.fillRect(counter.x, counter.y, counter.w, counter.h);
+  // Flessen achterin
+  const back = backStrip(b, facing, ts * 0.5);
+  const horizontal = facing === 'south' || facing === 'north';
+  const colors = ['#65a30d', '#f59e0b', '#38bdf8', '#e11d48'];
+  for (let i = 0; i < 7; i++) {
+    ctx.fillStyle = colors[i % colors.length];
+    const t = (i + 0.5) / 7;
+    if (horizontal) ctx.fillRect(back.x + back.w * t - 1.5, back.y + back.h * 0.25, 3, back.h * 0.5);
+    else ctx.fillRect(back.x + back.w * 0.25, back.y + back.h * t - 1.5, back.w * 0.5, 3);
+  }
+  label(ctx, 'BAR', b.x + b.w / 2, b.y + b.h / 2, ts * 0.42, '#fde68a');
+}
+
+function drawMerch(ctx: CanvasRenderingContext2D, b: Box, facing: Facing, ts: number): void {
+  ctx.fillStyle = '#6d28d9';
+  roundRect(ctx, b.x, b.y, b.w, b.h, 3);
+  ctx.fill();
+  const front = frontStrip(b, facing, ts * 0.35);
+  ctx.fillStyle = '#c4b5fd';
+  ctx.fillRect(front.x, front.y, front.w, front.h);
+  // T-shirt
+  const cx = b.x + b.w / 2;
+  const cy = b.y + b.h / 2 - ts * 0.05;
+  const u = ts * 0.22;
+  ctx.fillStyle = '#facc15';
+  ctx.beginPath();
+  ctx.moveTo(cx - u * 0.6, cy - u);
+  ctx.lineTo(cx - u * 1.4, cy - u * 0.4);
+  ctx.lineTo(cx - u, cy);
+  ctx.lineTo(cx - u * 0.7, cy - u * 0.2);
+  ctx.lineTo(cx - u * 0.7, cy + u);
+  ctx.lineTo(cx + u * 0.7, cy + u);
+  ctx.lineTo(cx + u * 0.7, cy - u * 0.2);
+  ctx.lineTo(cx + u, cy);
+  ctx.lineTo(cx + u * 1.4, cy - u * 0.4);
+  ctx.lineTo(cx + u * 0.6, cy - u);
+  ctx.closePath();
+  ctx.fill();
+}
+
+const POST_STYLE: Record<PostType, { bg: string; fg: string; text: string }> = {
+  firstaid: { bg: '#15803d', fg: '#ffffff', text: '' },
+  security: { bg: '#1e293b', fg: '#facc15', text: 'BEV' },
+  awareness: { bg: '#a21caf', fg: '#fdf4ff', text: '' },
+};
+
+export const STAFF_COLORS: Record<PostType, string> = {
+  firstaid: '#22c55e',
+  security: '#facc15',
+  awareness: '#e879f9',
+};
+
+const INCIDENT_COLORS: Record<IncidentKind, string> = {
+  medical: '#22c55e',
+  conflict: '#facc15',
+  wellbeing: '#e879f9',
+};
+
+function drawPost(ctx: CanvasRenderingContext2D, b: Box, type: PostType, ts: number): void {
+  const st = POST_STYLE[type];
+  ctx.fillStyle = st.bg;
+  roundRect(ctx, b.x, b.y, b.w, b.h, 4);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  const cx = b.x + b.w / 2;
+  const cy = b.y + b.h / 2;
+  ctx.fillStyle = st.fg;
+  if (type === 'firstaid') {
+    // Wit kruis op groen (EHBO-symbool, niet het beschermde rode kruis)
+    const arm = Math.min(b.w, b.h) * 0.32;
+    const thick = arm * 0.55;
+    ctx.fillRect(cx - thick / 2, cy - arm, thick, arm * 2);
+    ctx.fillRect(cx - arm, cy - thick / 2, arm * 2, thick);
+  } else if (type === 'awareness') {
+    // Hartje
+    const r = Math.min(b.w, b.h) * 0.18;
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.9, cy - r * 0.3, r, Math.PI, 0);
+    ctx.arc(cx + r * 0.9, cy - r * 0.3, r, Math.PI, 0);
+    ctx.lineTo(cx, cy + r * 1.6);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    label(ctx, st.text, cx, cy, ts * 0.38, st.fg);
+  }
+}
+
+function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, color: string): void {
+  ctx.fillStyle = color;
+  ctx.font = `bold ${Math.round(size)}px ui-sans-serif, system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+
+function drawCoverage(ctx: CanvasRenderingContext2D, input: RenderInput): void {
+  const { minutes } = input.coverage!;
+  const ts = input.tileSize;
+  const W = input.layout.grid.width;
+  for (let i = 0; i < minutes.length; i++) {
+    const m = minutes[i];
+    if (!Number.isFinite(m)) continue;
+    ctx.fillStyle = m <= 3 ? 'rgba(34,197,94,0.28)' : m <= 6 ? 'rgba(250,204,21,0.26)' : 'rgba(239,68,68,0.24)';
+    const x = i % W;
+    ctx.fillRect(x * ts, ((i - x) / W) * ts, ts, ts);
+  }
+}
+
+function drawStaff(ctx: CanvasRenderingContext2D, input: RenderInput, sim: SimulationState): void {
+  const ts = input.tileSize;
+  // Open incidenten: pulserende ring rond de bezoeker
+  const pulse = 0.5 + 0.5 * Math.sin(input.timeMs / 160);
+  for (const inc of sim.incidents) {
+    if (inc.outcome !== 'open') continue;
+    const v = sim.visitors[inc.visitorId];
+    ctx.strokeStyle = INCIDENT_COLORS[inc.kind];
+    ctx.globalAlpha = 0.5 + 0.5 * pulse;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(v.x * ts, v.y * ts, ts * (0.35 + 0.15 * pulse), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  const size = Math.max(4, ts * 0.26);
+  sim.staff.forEach((st, i) => {
+    let x = (st.prevX + (st.x - st.prevX) * input.alpha) * ts;
+    let y = (st.prevY + (st.y - st.prevY) * input.alpha) * ts;
+    if (st.state === 'idle') {
+      // Wachtende medewerkers naast elkaar bij hun post
+      x += ((i % 2) - 0.5) * size * 1.3;
+      y += size * 0.2;
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(x - size / 2 + 1, y - size / 2 + 2, size, size);
+    ctx.fillStyle = STAFF_COLORS[st.kind];
+    ctx.fillRect(x - size / 2, y - size / 2, size, size);
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - size / 2, y - size / 2, size, size);
+  });
 }
 
 function seatTables(b: Box, facing: Facing): Point[] {

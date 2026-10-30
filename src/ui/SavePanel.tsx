@@ -3,13 +3,14 @@ import { deleteSave, listSaves, type SaveSummary } from '../storage/saves';
 import { Button, Section } from './components';
 
 interface Props {
+  defaultName: string;
   onSave: (name: string) => Promise<void>;
   onLoad: (name: string) => Promise<void>;
 }
 
-export function SavePanel({ onSave, onLoad }: Props) {
+export function SavePanel({ defaultName, onSave, onLoad }: Props) {
   const [saves, setSaves] = useState<SaveSummary[]>([]);
-  const [name, setName] = useState('Mijn festival');
+  const [name, setName] = useState(defaultName);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -35,7 +36,7 @@ export function SavePanel({ onSave, onLoad }: Props) {
   };
 
   return (
-    <Section title="Opslaan en laden">
+    <Section title="Reeks opslaan en laden">
       <div className="flex gap-2">
         <input
           className="min-w-0 flex-1 rounded-md bg-slate-800 px-2 py-1 text-sm text-slate-100 ring-1 ring-white/10"
@@ -55,7 +56,7 @@ export function SavePanel({ onSave, onLoad }: Props) {
                 {s.name}
                 <span className="ml-1.5 text-[11px] text-slate-500">
                   {new Date(s.savedAt).toLocaleString('nl-NL', { dateStyle: 'short', timeStyle: 'short' })}
-                  {s.hasReport ? ' · met rapport' : ''}
+                  {` · ${s.editions} ${s.editions === 1 ? 'editie' : 'edities'}`}
                 </span>
               </span>
               <span className="flex shrink-0 gap-1">
@@ -72,8 +73,9 @@ export function SavePanel({ onSave, onLoad }: Props) {
       )}
       {error && <p className="mt-2 text-xs text-rose-300">{error}</p>}
       <p className="mt-2 text-[11px] text-slate-500">
-        Bewaart terrein, programma, instellingen, seed en het laatste eindrapport. Een simulatie die nog loopt wordt niet
-        opgeslagen; die start na laden opnieuw vanaf 14:00. Het huidige ontwerp wordt ook automatisch bewaard in deze browser.
+        Bewaart de hele festivalreeks: alle edities met rapporten, het kapitaal en het concept voor de volgende editie. Een
+        simulatie die nog loopt wordt niet opgeslagen; die start na laden opnieuw vanaf 14:00. De reeks wordt ook automatisch
+        bewaard in deze browser.
       </p>
     </Section>
   );

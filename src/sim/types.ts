@@ -1,13 +1,30 @@
-import type { BudgetLine } from '../model/budget';
-import type { Rng } from './rng';
+import type { ProductType } from '../model/catalog';
+import type { DemandBreakdown, EditionFinance } from '../model/economy';
 import type { ReachabilityAnalysis, WalkGrid } from '../model/reachability';
-import type { FacilityType, FestivalLayout, Genre, Program, ScenarioSettings } from '../model/types';
+import type { FacilityType, FestivalLayout, Genre, PostType, Program, ScenarioSettings } from '../model/types';
+import type { Rng } from './rng';
 
-export type VisitorState = 'Entering' | 'Walking' | 'Watching' | 'Queuing' | 'BeingServed' | 'Resting' | 'Leaving';
+export type VisitorState =
+  | 'Entering'
+  | 'Walking'
+  | 'Watching'
+  | 'Queuing'
+  | 'BeingServed'
+  | 'Resting'
+  | 'BeingHelped'
+  | 'Leaving';
 
-export type GoalKind = 'enter' | 'stage' | 'food' | 'toilet' | 'seating' | 'wander' | 'exit';
+export type GoalKind = 'enter' | 'stage' | 'food' | 'bar' | 'toilet' | 'seating' | 'merch' | 'wander' | 'exit';
 
-export type NeedKind = 'food' | 'toilet' | 'seating';
+/** Behoeften die een voorziening nodig hebben. */
+export type NeedKind = 'food' | 'drink' | 'toilet' | 'seating';
+
+export const NEED_FACILITY: Record<NeedKind, FacilityType> = {
+  food: 'food',
+  drink: 'bar',
+  toilet: 'toilet',
+  seating: 'seating',
+};
 
 export interface VisitorGoal {
   kind: GoalKind;
@@ -15,22 +32,25 @@ export interface VisitorGoal {
   tile: number;
 }
 
-export interface Visitor {
+/** Alles wat langs een pad over het raster beweegt (bezoekers en medewerkers). */
+export interface Mover {
+  x: number;
+  y: number;
+  prevX: number;
+  prevY: number;
+  tile: number;
+  path: number[];
+  pathIndex: number;
+}
+
+export interface Visitor extends Mover {
   id: number;
   phase: 'pending' | 'onSite' | 'exited';
   arrivalTick: number;
   state: VisitorState;
-  /** Positie in tegel-eenheden; tegelmidden = index + 0,5. */
-  x: number;
-  y: number;
-  /** Positie aan het begin van de laatste tick, voor interpolatie in de renderer. */
-  prevX: number;
-  prevY: number;
-  tile: number;
   goal: VisitorGoal | null;
-  path: number[];
-  pathIndex: number;
   hunger: number;
+  thirst: number;
   toilet: number;
   energy: number;
   satisfaction: number;
@@ -43,6 +63,8 @@ export interface Visitor {
   /** Behoeften waarvoor bij het laatste beslismoment geen bereikbare voorziening was. */
   unmetNeeds: NeedKind[];
   needsDecision: boolean;
+  boughtMerch: boolean;
+  incidentId: number | null;
   leftEarly: boolean;
   exitTick: number | null;
 }
@@ -65,10 +87,56 @@ export interface FacilityRuntime {
   serving: ServingSlot[];
   /** Zitgebied: bezoekers die zitten. */
   occupants: number[];
-  /** Kostenveld naar de toegangstegel (alleen bij bereikbare voorzieningen). */
+  /** Kostenveld naar de toegangstegel (alleen bij bereikbare voorzieningen). Bij hulpposten in tegels (staffWalk). */
   field: Float32Array | null;
   /** Podium: bereikbare publiekstegels. */
   audienceTiles: number[];
+  /** Hulppost: id's van de medewerkers. */
+  staffIds: number[];
+}
+
+export type IncidentKind = 'medical' | 'conflict' | 'wellbeing';
+
+export const INCIDENT_POST: Record<IncidentKind, PostType> = {
+  medical: 'firstaid',
+  conflict: 'security',
+  wellbeing: 'awareness',
+};
+
+export interface Incident {
+  id: number;
+  kind: IncidentKind;
+  visitorId: number;
+  tile: number;
+  createdTick: number;
+  staffId: number | null;
+  arrivedTick: number | null;
+  resolvedTick: number | null;
+  outcome: 'open' | 'handled' | 'unhandled';
+}
+
+export type StaffState = 'idle' | 'responding' | 'handling' | 'returning';
+
+export interface StaffMember extends Mover {
+  id: number;
+  postId: string;
+  kind: PostType;
+  state: StaffState;
+  incidentId: number | null;
+  timer: number;
+  /** Ticks bezig (onderweg of helpend), voor de bezettingsgraad. */
+  busyTicks: number;
+}
+
+export interface SimulationInput {
+  layout: FestivalLayout;
+  program: Program;
+  scenario: ScenarioSettings;
+  seed: number;
+  /** Uit de vraagregel (model/economy.ts); bepaalt ook het aantal bezoekers en de ticketprijs. */
+  demand: DemandBreakdown;
+  /** Kapitaal bij de start van deze editie. */
+  capitalStart: number;
 }
 
 export interface MetricSample {
@@ -78,13 +146,19 @@ export interface MetricSample {
   watching: Record<string, number>;
   queues: Record<string, number>;
   noGoal: number;
+  openIncidents: number;
+  /** Omzet tot nu toe (tickets + verkoop). */
+  revenue: number;
   /** Drukste 3×3-venster: aantal bezoekers en middentegel. */
   peakCount: number;
   peakTile: number;
 }
 
 export interface FacilityStats {
+  /** Bediening gestart. */
   served: number;
+  /** Bediening afgerond (bij verkooppunten: verkocht). */
+  completed: number;
   abandoned: number;
   totalWaitTicks: number;
   maxQueue: number;
@@ -104,13 +178,7 @@ export interface SimulationMetrics {
   stageWatchMinutes: Record<string, number>;
   walkTicksPath: number;
   walkTicksGrass: number;
-}
-
-export interface SimulationInput {
-  layout: FestivalLayout;
-  program: Program;
-  scenario: ScenarioSettings;
-  seed: number;
+  sales: Record<ProductType, number>;
 }
 
 export interface SimulationState {
@@ -120,6 +188,8 @@ export interface SimulationState {
   totalTicks: number;
   rng: Rng;
   walk: WalkGrid;
+  /** Zelfde raster met gelijke kosten per tegel: medewerkers lopen het kortste aantal tegels. */
+  staffWalk: WalkGrid;
   analysis: ReachabilityAnalysis;
   entranceId: string;
   gateTile: number;
@@ -132,6 +202,8 @@ export interface SimulationState {
   facilityOrder: string[];
   stageIds: string[];
   visitors: Visitor[];
+  staff: StaffMember[];
+  incidents: Incident[];
   metrics: SimulationMetrics;
   finished: boolean;
 }
@@ -147,6 +219,8 @@ export interface ReportFacility {
   maxQueue: number;
   turnedAway: number;
   underused: boolean;
+  /** Omzet bij verkooppunten. */
+  revenue: number;
 }
 
 export interface ReportStage {
@@ -155,7 +229,15 @@ export interface ReportStage {
   reachable: boolean;
   watchMinutes: number;
   peakAudience: number;
-  performances: { slot: number; actName: string; genre: Genre; popularity: number; peakAudience: number; avgAudience: number }[];
+  performances: {
+    slot: number;
+    actName: string;
+    genre: Genre;
+    popularity: number;
+    fee: number;
+    peakAudience: number;
+    avgAudience: number;
+  }[];
 }
 
 export interface ReportPeak {
@@ -166,11 +248,33 @@ export interface ReportPeak {
   near: string;
 }
 
+export interface ReportIncidents {
+  kind: IncidentKind;
+  total: number;
+  handled: number;
+  unhandled: number;
+  avgResponseMinutes: number | null;
+  maxResponseMinutes: number | null;
+  /** Voorziening het dichtst bij het traagst of niet geholpen incident. */
+  worstNear: string | null;
+}
+
+export interface ReportPost {
+  id: string;
+  name: string;
+  type: PostType;
+  reachable: boolean;
+  handled: number;
+  /** Fractie van de festivaltijd dat medewerkers bezig waren. */
+  utilization: number;
+}
+
 export interface FinalReport {
-  version: 1;
+  version: 2;
   signature: string;
   seed: number;
   visitorCount: number;
+  demand: DemandBreakdown;
   avgSatisfaction: number;
   leftEarly: number;
   stillOnSiteAtEnd: number;
@@ -179,9 +283,11 @@ export interface FinalReport {
   popularStageId: string | null;
   peaks: ReportPeak[];
   noGoal: Record<NeedKind, number>;
+  incidents: ReportIncidents[];
+  posts: ReportPost[];
   grassShare: number;
-  budget: { budget: number; spent: number; remaining: number; lines: BudgetLine[] };
+  finance: EditionFinance;
   advice: string[];
   heat: number[];
-  timeline: { minute: number; onSite: number; avgSatisfaction: number }[];
+  timeline: { minute: number; onSite: number; avgSatisfaction: number; revenue: number }[];
 }

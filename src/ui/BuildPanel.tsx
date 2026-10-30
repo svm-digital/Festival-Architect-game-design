@@ -1,6 +1,6 @@
-import { FACILITY_DEFS, FACILITY_ORDER, formatEuro } from '../model/catalog';
+import { POST_SHORT, CATEGORY_LABELS, FACILITY_DEFS, FACILITY_ORDER, formatEuro, isPost, type FacilityCategory, lowerLabel } from '../model/catalog';
 import type { ReachabilityAnalysis, ValidationIssue } from '../model/reachability';
-import type { Facility, FacilityType, Facing, FestivalLayout } from '../model/types';
+import type { Facility, FacilityType, Facing, FestivalLayout, PostType } from '../model/types';
 import { Bar, Button, Section, Toggle } from './components';
 import { IssueList } from './IssueList';
 
@@ -10,8 +10,9 @@ export const FACING_LABEL: Record<Facing, string> = { south: 'zuid ↓', west: '
 
 interface Props {
   layout: FestivalLayout;
-  budget: number;
-  spent: number;
+  capital: number;
+  rentCosts: number;
+  actFees: number;
   pathTileCost: number;
   tool: Tool;
   setTool: (t: Tool) => void;
@@ -27,25 +28,42 @@ interface Props {
   setShowReach: (v: boolean) => void;
   showZones: boolean;
   setShowZones: (v: boolean) => void;
+  coverageKind: PostType | null;
+  setCoverageKind: (k: PostType | null) => void;
   onLoadExample: () => void;
   onClear: () => void;
   onNext: () => void;
 }
 
+const CATEGORIES: FacilityCategory[] = ['basis', 'horeca', 'comfort', 'verkoop', 'zorg'];
+
 export function BuildPanel(p: Props) {
-  const remaining = p.budget - p.spent;
+  const remaining = p.capital - p.rentCosts - p.actFees;
   const toolIs = (t: Tool) =>
     p.tool.kind === t.kind && (t.kind !== 'facility' || (p.tool.kind === 'facility' && p.tool.type === t.type));
   const errors = p.issues.filter((i) => i.severity === 'error');
 
   return (
     <div className="flex flex-col gap-3">
-      <Section title="Budget" aside={<span className="text-xs text-slate-400">{formatEuro(p.budget)}</span>}>
-        <div className="mb-1 flex justify-between text-sm">
-          <span className="text-slate-300">Besteed {formatEuro(p.spent)}</span>
-          <span className={remaining < 0 ? 'text-rose-300' : 'text-emerald-300'}>Over {formatEuro(remaining)}</span>
+      <Section title="Kapitaal deze editie" aside={<span className="text-xs text-slate-400">{formatEuro(p.capital)}</span>}>
+        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="rounded-lg bg-slate-900/60 py-1.5">
+            <div className="text-slate-400">Huur terrein</div>
+            <div className="font-semibold text-slate-100 tabular-nums">{formatEuro(p.rentCosts)}</div>
+          </div>
+          <div className="rounded-lg bg-slate-900/60 py-1.5">
+            <div className="text-slate-400">Gages</div>
+            <div className="font-semibold text-slate-100 tabular-nums">{formatEuro(p.actFees)}</div>
+          </div>
+          <div className="rounded-lg bg-slate-900/60 py-1.5">
+            <div className="text-slate-400">Vrij</div>
+            <div className={`font-semibold tabular-nums ${remaining < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{formatEuro(remaining)}</div>
+          </div>
         </div>
-        <Bar value={p.spent} max={p.budget} tone={remaining < 0 ? 'rose' : 'amber'} />
+        <div className="mt-2">
+          <Bar value={p.rentCosts + p.actFees} max={Math.max(1, p.capital)} tone={remaining < 0 ? 'rose' : 'amber'} />
+        </div>
+        <p className="mt-1.5 text-[11px] text-slate-500">Alle prijzen zijn huur per editie, inclusief bezetting. Inkomsten komen pas tijdens het festival binnen.</p>
       </Section>
 
       <Section title="Bouwen" aside={<span className="text-[11px] text-slate-500">R = draaien · Esc = selecteren</span>}>
@@ -60,44 +78,47 @@ export function BuildPanel(p: Props) {
           />
           <ToolButton active={toolIs({ kind: 'erase' })} onClick={() => p.setTool({ kind: 'erase' })} label="Pad wissen" sub="geld terug" />
         </div>
-        <div className="mt-1.5 grid grid-cols-1 gap-1.5">
-          {FACILITY_ORDER.map((type) => {
-            const def = FACILITY_DEFS[type];
-            const count = p.layout.facilities.filter((f) => f.type === type).length;
-            const full = def.maxCount !== null && count >= def.maxCount;
-            const tooExpensive = def.cost > remaining;
-            return (
-              <button
-                key={type}
-                type="button"
-                onClick={() => p.setTool({ kind: 'facility', type })}
-                className={`flex items-center gap-3 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
-                  toolIs({ kind: 'facility', type }) ? 'bg-amber-400/20 ring-2 ring-amber-300' : 'bg-slate-900/50 hover:bg-slate-700/60'
-                }`}
-              >
-                <span className="h-6 w-6 shrink-0 rounded" style={{ background: FACILITY_SWATCH[type] }} />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium text-slate-100">
-                    {def.label}
-                    <span className="ml-1.5 text-xs font-normal text-slate-500">
-                      {def.width}×{def.height}
-                      {def.maxCount !== null ? ` · ${count}/${def.maxCount}` : count > 0 ? ` · ${count}×` : ''}
-                    </span>
-                  </span>
-                  <span className="block truncate text-[11px] text-slate-400">{def.description}</span>
-                </span>
-                <span className={`text-sm tabular-nums ${full || tooExpensive ? 'text-rose-300' : 'text-amber-200'}`}>
-                  {formatEuro(def.cost)}
-                </span>
-              </button>
-            );
-          })}
+        <div className="mt-2 space-y-2">
+          {CATEGORIES.map((cat) => (
+            <div key={cat}>
+              <div className="mb-1 text-[11px] font-medium text-slate-400">{CATEGORY_LABELS[cat]}</div>
+              <div className="grid grid-cols-1 gap-1">
+                {FACILITY_ORDER.filter((t) => FACILITY_DEFS[t].category === cat).map((type) => {
+                  const def = FACILITY_DEFS[type];
+                  const count = p.layout.facilities.filter((f) => f.type === type).length;
+                  const full = def.maxCount !== null && count >= def.maxCount;
+                  const tooExpensive = def.cost > remaining;
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => p.setTool({ kind: 'facility', type })}
+                      className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1 text-left transition-colors ${
+                        toolIs({ kind: 'facility', type }) ? 'bg-amber-400/20 ring-2 ring-amber-300' : 'bg-slate-900/50 hover:bg-slate-700/60'
+                      }`}
+                    >
+                      <span className="h-5 w-5 shrink-0 rounded" style={{ background: FACILITY_SWATCH[type] }} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-slate-100">
+                          {def.label}
+                          <span className="ml-1.5 text-xs font-normal text-slate-500">
+                            {def.width}×{def.height}
+                            {def.maxCount !== null ? ` · ${count}/${def.maxCount}` : count > 0 ? ` · ${count}×` : ''}
+                          </span>
+                        </span>
+                        <span className="block truncate text-[11px] text-slate-400">{def.description}</span>
+                      </span>
+                      <span className={`text-sm tabular-nums ${full || tooExpensive ? 'text-rose-300' : 'text-amber-200'}`}>{formatEuro(def.cost)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
         {p.tool.kind === 'facility' && (
           <div className="mt-2 flex items-center justify-between rounded-lg bg-slate-900/50 px-2.5 py-1.5 text-sm">
-            <span className="text-slate-300">
-              Toegang: {p.tool.type === 'entrance' ? 'automatisch naar binnen' : FACING_LABEL[p.facing]}
-            </span>
+            <span className="text-slate-300">Toegang: {p.tool.type === 'entrance' ? 'automatisch naar binnen' : FACING_LABEL[p.facing]}</span>
             <Button variant="ghost" onClick={p.rotate} disabled={p.tool.type === 'entrance'}>
               Draai (R)
             </Button>
@@ -123,6 +144,26 @@ export function BuildPanel(p: Props) {
           <Toggle label="Bereikbaarheid" checked={p.showReach} onChange={p.setShowReach} />
           <Toggle label="Publiekszones" checked={p.showZones} onChange={p.setShowZones} />
         </div>
+        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-slate-400">Dekking hulpposten:</span>
+          {(['firstaid', 'security', 'awareness'] as PostType[]).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => p.setCoverageKind(p.coverageKind === k ? null : k)}
+              className={`rounded-md px-2 py-0.5 ${p.coverageKind === k ? 'bg-amber-400 text-slate-900' : 'bg-slate-700 text-slate-200 hover:bg-slate-600'}`}
+            >
+              {POST_SHORT[k]}
+            </button>
+          ))}
+        </div>
+        {p.coverageKind && (
+          <p className="mb-2 text-[11px] text-slate-400">
+            Aanlooptijd vanaf de dichtstbijzijnde {lowerLabel(p.coverageKind)}:{' '}
+            <span className="text-emerald-300">≤ 3 min</span> · <span className="text-amber-300">≤ 6 min</span> ·{' '}
+            <span className="text-rose-300">langer</span>.
+          </p>
+        )}
         <IssueList issues={p.issues} onFocus={p.onFocusFacility} />
       </Section>
 
@@ -145,8 +186,13 @@ export const FACILITY_SWATCH: Record<FacilityType, string> = {
   entrance: 'repeating-linear-gradient(90deg,#f97316 0 4px,#fde68a 4px 8px)',
   stage: '#3a3f57',
   food: 'repeating-linear-gradient(90deg,#dc2626 0 4px,#fff7ed 4px 8px)',
+  bar: '#b7791f',
   toilet: '#60a5fa',
   seating: '#c8a36b',
+  merch: '#6d28d9',
+  firstaid: '#15803d',
+  security: '#1e293b',
+  awareness: '#a21caf',
 };
 
 function ToolButton({ active, onClick, label, sub, swatch }: { active: boolean; onClick: () => void; label: string; sub: string; swatch?: string }) {
@@ -172,11 +218,11 @@ function SelectedCard({ facility, analysis, onDelete }: { facility: Facility; an
     <div className="space-y-2 text-sm">
       <div className="flex items-center justify-between">
         <span className="font-semibold text-slate-100">{facility.name}</span>
-        <span className="text-slate-400">{formatEuro(def.cost)}</span>
+        <span className="text-slate-400">{formatEuro(def.cost)} per editie</span>
       </div>
       <div className="text-xs text-slate-400">
         Positie ({facility.x}, {facility.y}) · toegang {FACING_LABEL[facility.facing]}
-        {def.capacity !== null && ` · capaciteit ${def.capacity}`}
+        {def.capacity !== null && (isPost(facility.type) ? ` · ${def.capacity} medewerkers` : ` · capaciteit ${def.capacity}`)}
         {def.serviceMinutes !== null && ` · ${def.serviceMinutes} min per bezoeker`}
       </div>
       {facility.type !== 'entrance' &&
@@ -186,7 +232,7 @@ function SelectedCard({ facility, analysis, onDelete }: { facility: Facility; an
           <div className="rounded-md bg-rose-500/10 px-2 py-1.5 text-xs text-rose-200 ring-1 ring-rose-400/30">{reach?.explanation}</div>
         ))}
       <Button variant="danger" onClick={() => onDelete(facility.id)}>
-        Verwijderen (Del) · {formatEuro(def.cost)} terug
+        Verwijderen (Del)
       </Button>
     </div>
   );

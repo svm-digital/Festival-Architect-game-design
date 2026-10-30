@@ -1,39 +1,32 @@
-// IndexedDB-opslag voor ontwerpen. Een lopende simulatie wordt bewust NIET opgeslagen:
+// IndexedDB-opslag voor festivalreeksen. Een lopende simulatie wordt bewust NIET opgeslagen:
 // na herladen start de simulatie opnieuw vanaf het begin met dezelfde seed.
 
-import type { FestivalLayout, Program, ScenarioSettings } from '../model/types';
-import type { FinalReport } from '../sim/types';
+import { createCampaign, type Campaign } from '../game/campaign';
+import { COMPACT_SCENARIO } from '../model/scenario';
+import type { FestivalLayout, Program } from '../model/types';
 
 export const DB_NAME = 'festival-architect';
 export const STORE = 'saves';
 export const AUTOSAVE_NAME = '__autosave__';
 
 export interface SaveFile {
-  version: 1;
+  version: 2;
   name: string;
   savedAt: string;
-  layout: FestivalLayout;
-  program: Program;
-  scenario: ScenarioSettings;
-  seed: number;
-  lastReport: FinalReport | null;
+  campaign: Campaign;
 }
 
 export interface SaveSummary {
   name: string;
   savedAt: string;
-  hasReport: boolean;
+  editions: number;
 }
 
 export class SaveFormatError extends Error {}
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 
-/** Controleert de vorm van een (mogelijk oud of beschadigd) savebestand. */
-export function parseSave(raw: unknown): SaveFile {
-  if (!isObj(raw)) throw new SaveFormatError('Geen geldig savebestand.');
-  if (raw.version !== 1) throw new SaveFormatError(`Onbekende saveversie: ${String(raw.version)}.`);
-  const layout = raw.layout;
+function checkLayout(layout: unknown): FestivalLayout {
   if (!isObj(layout) || !isObj(layout.grid) || !Array.isArray(layout.facilities)) {
     throw new SaveFormatError('Terrein ontbreekt of is beschadigd.');
   }
@@ -54,10 +47,44 @@ export function parseSave(raw: unknown): SaveFile {
       throw new SaveFormatError('Een voorziening is beschadigd.');
     }
   }
-  if (!isObj(raw.program) || !Array.isArray(raw.program.performances)) throw new SaveFormatError('Programma ontbreekt.');
-  if (!isObj(raw.scenario) || typeof raw.scenario.id !== 'string') throw new SaveFormatError('Scenario ontbreekt.');
-  if (typeof raw.seed !== 'number' || !Number.isFinite(raw.seed)) throw new SaveFormatError('Seed ontbreekt.');
+  return layout as unknown as FestivalLayout;
+}
+
+function checkProgram(program: unknown): Program {
+  if (!isObj(program) || !Array.isArray(program.performances)) throw new SaveFormatError('Programma ontbreekt.');
+  return program as unknown as Program;
+}
+
+/** Controleert de vorm van een savebestand en zet versie 1 (los ontwerp) om naar een festivalreeks. */
+export function parseSave(raw: unknown): SaveFile {
+  if (!isObj(raw)) throw new SaveFormatError('Geen geldig savebestand.');
   if (typeof raw.name !== 'string') throw new SaveFormatError('Naam ontbreekt.');
+  if (raw.version === 1) {
+    if (typeof raw.seed !== 'number' || !Number.isFinite(raw.seed)) throw new SaveFormatError('Seed ontbreekt.');
+    const campaign = createCampaign(raw.name, COMPACT_SCENARIO, {
+      layout: checkLayout(raw.layout),
+      program: checkProgram(raw.program),
+      seed: raw.seed,
+    });
+    return { version: 2, name: raw.name, savedAt: String(raw.savedAt ?? ''), campaign };
+  }
+  if (raw.version !== 2) throw new SaveFormatError(`Onbekende saveversie: ${String(raw.version)}.`);
+  const c = raw.campaign;
+  if (!isObj(c) || c.version !== 2 || !Array.isArray(c.editions) || !isObj(c.draft)) {
+    throw new SaveFormatError('Festivalreeks ontbreekt of is beschadigd.');
+  }
+  if (typeof c.startCapital !== 'number') throw new SaveFormatError('Startkapitaal ontbreekt.');
+  const d = c.draft as Record<string, unknown>;
+  checkLayout(d.layout);
+  checkProgram(d.program);
+  if (typeof d.seed !== 'number' || !Number.isFinite(d.seed)) throw new SaveFormatError('Seed ontbreekt.');
+  if (typeof d.ticketPrice !== 'number') throw new SaveFormatError('Ticketprijs ontbreekt.');
+  for (const e of c.editions as unknown[]) {
+    if (!isObj(e) || typeof e.number !== 'number' || !isObj(e.report) || !isObj((e.report as Record<string, unknown>).finance)) {
+      throw new SaveFormatError('Een editie is beschadigd.');
+    }
+    checkLayout(e.layout);
+  }
   return raw as unknown as SaveFile;
 }
 
@@ -111,7 +138,10 @@ export async function listSaves(factory?: IDBFactory): Promise<SaveSummary[]> {
   return all
     .filter(isObj)
     .filter((r) => r.name !== AUTOSAVE_NAME)
-    .map((r) => ({ name: String(r.name), savedAt: String(r.savedAt), hasReport: r.lastReport != null }))
+    .map((r) => {
+      const c = isObj(r.campaign) ? r.campaign : null;
+      return { name: String(r.name), savedAt: String(r.savedAt), editions: c && Array.isArray(c.editions) ? c.editions.length : 0 };
+    })
     .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
 }
 

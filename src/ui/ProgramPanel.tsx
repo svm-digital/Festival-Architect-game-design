@@ -1,4 +1,5 @@
-import { ACTS, GENRE_COLORS, GENRE_LABELS, GENRES, getAct } from '../model/catalog';
+import { actFee, ACTS, formatDecimal, formatEuro, GENRE_COLORS, GENRE_LABELS, GENRES, getAct } from '../model/catalog';
+import { ECONOMY, type DemandBreakdown } from '../model/economy';
 import type { ValidationIssue } from '../model/reachability';
 import type { Facility, Genre, Program, ScenarioSettings } from '../model/types';
 import { slotLabel } from '../sim/clock';
@@ -7,23 +8,29 @@ import { IssueList } from './IssueList';
 
 interface Props {
   scenario: ScenarioSettings;
+  editionNumber: number;
   stages: Facility[];
   program: Program;
   setProgram: (p: Program) => void;
   seed: number;
   setSeed: (n: number) => void;
-  visitorCount: number;
-  setVisitorCount: (n: number) => void;
+  ticketPrice: number;
+  setTicketPrice: (n: number) => void;
+  demand: DemandBreakdown;
+  previousSatisfaction: number | null;
+  capital: number;
+  fixedCosts: number;
   issues: ValidationIssue[];
   canSimulate: boolean;
   onBack: () => void;
-  onSimulate: () => void;
+  onSimulate: (trial: boolean) => void;
 }
 
 export function ProgramPanel(p: Props) {
   const assignment = (stageId: string, slot: number) =>
     p.program.performances.find((x) => x.stageId === stageId && x.slot === slot)?.actId ?? '';
   const usedActs = new Set(p.program.performances.map((x) => x.actId));
+  const d = p.demand;
 
   const setCell = (stageId: string, slot: number, actId: string) => {
     const rest = p.program.performances.filter((x) => !(x.stageId === stageId && x.slot === slot));
@@ -32,7 +39,54 @@ export function ProgramPanel(p: Props) {
 
   return (
     <div className="flex flex-col gap-3">
-      <Section title="Programma">
+      <Section title={`Tickets · editie ${p.editionNumber}`}>
+        <div className="flex items-center gap-3">
+          <input
+            type="range"
+            min={ECONOMY.ticketPrice.min}
+            max={ECONOMY.ticketPrice.max}
+            step={1}
+            value={p.ticketPrice}
+            onChange={(e) => p.setTicketPrice(Number(e.target.value))}
+            className="flex-1 accent-amber-400"
+            aria-label="Ticketprijs"
+          />
+          <input
+            type="number"
+            min={ECONOMY.ticketPrice.min}
+            max={ECONOMY.ticketPrice.max}
+            value={p.ticketPrice}
+            onChange={(e) => {
+              const n = Number.parseInt(e.target.value, 10);
+              if (Number.isFinite(n)) p.setTicketPrice(Math.max(ECONOMY.ticketPrice.min, Math.min(ECONOMY.ticketPrice.max, n)));
+            }}
+            className="w-20 rounded-md bg-slate-800 px-2 py-1 text-right text-sm text-slate-100 ring-1 ring-white/10"
+            aria-label="Ticketprijs in euro"
+          />
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+          <Factor label="Prijs" value={d.priceFactor} />
+          <Factor label="Line-up" value={d.lineupFactor} />
+          <Factor label="Reputatie" value={d.reputationFactor} />
+        </div>
+        <div className="mt-2 flex items-baseline justify-between rounded-lg bg-slate-900/60 px-3 py-2">
+          <span className="text-sm text-slate-300">
+            Bezoekers: <span className="text-lg font-semibold text-slate-100 tabular-nums">{d.visitors}</span>
+            {d.soldOut && <span className="ml-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[11px] text-emerald-300">uitverkocht</span>}
+          </span>
+          <span className="text-sm text-slate-300">
+            Tickets <span className="font-semibold text-amber-200 tabular-nums">{formatEuro(d.visitors * p.ticketPrice)}</span>
+          </span>
+        </div>
+        <p className="mt-2 text-[11px] text-slate-500">
+          Bezoekers = {p.scenario.maxVisitors} × prijs × line-up × reputatie (max {p.scenario.maxVisitors}).{' '}
+          {p.previousSatisfaction === null
+            ? 'Editie 1 heeft een neutrale reputatie.'
+            : `Reputatie komt uit de tevredenheid van de vorige editie (${formatDecimal(p.previousSatisfaction, 0)}).`}
+        </p>
+      </Section>
+
+      <Section title="Programma" aside={<span className="text-xs text-slate-400">gage = populariteit × {formatEuro(actFee({ id: '', name: '', genre: 'pop', popularity: 1 }))}</span>}>
         {p.stages.length === 0 ? (
           <p className="text-sm text-slate-400">Plaats eerst een podium in de bouwmodus.</p>
         ) : (
@@ -59,7 +113,7 @@ export function ProgramPanel(p: Props) {
                             <optgroup key={g} label={GENRE_LABELS[g]}>
                               {ACTS.filter((a) => a.genre === g).map((a) => (
                                 <option key={a.id} value={a.id} disabled={usedActs.has(a.id) && a.id !== current}>
-                                  {a.name} · pop. {a.popularity}
+                                  {a.name} · pop. {a.popularity} · {formatEuro(actFee(a))}
                                   {usedActs.has(a.id) && a.id !== current ? ' (geboekt)' : ''}
                                 </option>
                               ))}
@@ -74,43 +128,33 @@ export function ProgramPanel(p: Props) {
               </div>
             ))}
             <p className="text-[11px] text-slate-500">
-              Pop. = populariteit (1–10). Elke act kan één keer geboekt worden. Alle acts zijn fictief. Bezoekers kiezen een podium op populariteit,
-              eigen genrevoorkeur (één genre per bezoeker, gelijk verdeeld) en afstand.
+              Pop. = populariteit (1–10). Elke act kan één keer geboekt worden. Alle acts zijn fictief. Een populaire line-up trekt
+              meer bezoekers en kijkers, maar kost meer gage.
             </p>
           </div>
         )}
       </Section>
 
-      <Section title="Simulatie-instellingen">
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-slate-400">Seed</span>
-            <input
-              type="number"
-              className="rounded-md bg-slate-800 px-2 py-1 text-slate-100 ring-1 ring-white/10"
-              value={p.seed}
-              onChange={(e) => {
-                const n = Number.parseInt(e.target.value, 10);
-                if (Number.isFinite(n)) p.setSeed(n);
-              }}
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-slate-400">Bezoekers (max {p.scenario.maxVisitors})</span>
-            <input
-              type="number"
-              min={10}
-              max={p.scenario.maxVisitors}
-              className="rounded-md bg-slate-800 px-2 py-1 text-slate-100 ring-1 ring-white/10"
-              value={p.visitorCount}
-              onChange={(e) => {
-                const n = Number.parseInt(e.target.value, 10);
-                if (Number.isFinite(n)) p.setVisitorCount(Math.max(10, Math.min(p.scenario.maxVisitors, n)));
-              }}
-            />
-          </label>
+      <Section title="Kosten en seed">
+        <div className="mb-2 flex justify-between text-sm">
+          <span className="text-slate-300">Vaste kosten (huur + gages)</span>
+          <span className={`tabular-nums ${p.fixedCosts > p.capital ? 'text-rose-300' : 'text-slate-100'}`}>
+            {formatEuro(p.fixedCosts)} van {formatEuro(p.capital)}
+          </span>
         </div>
-        <p className="mt-2 text-[11px] text-slate-500">Zelfde ontwerp + programma + seed = exact dezelfde uitkomst.</p>
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-xs text-slate-400">Seed</span>
+          <input
+            type="number"
+            className="w-28 rounded-md bg-slate-800 px-2 py-1 text-slate-100 ring-1 ring-white/10"
+            value={p.seed}
+            onChange={(e) => {
+              const n = Number.parseInt(e.target.value, 10);
+              if (Number.isFinite(n)) p.setSeed(n);
+            }}
+          />
+          <span className="text-[11px] text-slate-500">zelfde ontwerp + prijs + seed = zelfde uitkomst</span>
+        </label>
       </Section>
 
       <Section title="Controle vóór simulatie">
@@ -121,10 +165,22 @@ export function ProgramPanel(p: Props) {
         <Button variant="ghost" onClick={p.onBack}>
           ← Terrein
         </Button>
-        <Button variant="primary" onClick={p.onSimulate} disabled={!p.canSimulate}>
-          Naar simulatie →
+        <Button variant="secondary" onClick={() => p.onSimulate(true)} disabled={!p.canSimulate} title="Telt niet als editie; kapitaal verandert niet">
+          Proefrun
+        </Button>
+        <Button variant="primary" onClick={() => p.onSimulate(false)} disabled={!p.canSimulate}>
+          Editie {p.editionNumber} draaien →
         </Button>
       </div>
+    </div>
+  );
+}
+
+function Factor({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg bg-slate-900/60 py-1.5">
+      <div className="text-slate-400">{label}</div>
+      <div className={`font-semibold tabular-nums ${value >= 1 ? 'text-emerald-300' : 'text-amber-200'}`}>× {formatDecimal(value, 2)}</div>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { removeFacility } from '../src/model/layout';
 import { buildReport } from '../src/sim/report';
 import { createSimulation, hashState, runToEnd, SimulationSetupError, step } from '../src/sim/simulation';
 import type { SimulationState } from '../src/sim/types';
-import { blankLayout, exampleInput, place, S } from './helpers';
+import { blankLayout, exampleInput, place } from './helpers';
 
 /** Controleert per tick alle invarianten van routes en wachtrijen. Gooit bij de eerste overtreding. */
 function checkInvariants(s: SimulationState, lastTile: Map<number, number>) {
@@ -44,12 +44,33 @@ function checkInvariants(s: SimulationState, lastTile: Map<number, number>) {
       if (d !== 1) fail(`bezoeker ${v.id} sprong ${d} tegels`);
     }
     lastTile.set(v.id, v.tile);
+    // Na afhandeling staat de bezoeker één tick op BeingHelped met needsDecision, net als na bediening.
+    if (v.state === 'BeingHelped' && !v.needsDecision) {
+      if (v.incidentId === null || s.incidents[v.incidentId].outcome !== 'open') fail(`bezoeker ${v.id} wacht op hulp zonder open melding`);
+    }
+  }
+  for (const inc of s.incidents) {
+    if (inc.outcome !== 'open') continue;
+    const v = s.visitors[inc.visitorId];
+    if (v.state !== 'BeingHelped' || v.incidentId !== inc.id) fail(`open melding ${inc.id} hoort niet bij een wachtende bezoeker`);
+    if (inc.staffId !== null && s.staff[inc.staffId].incidentId !== inc.id) fail(`melding ${inc.id} en medewerker lopen uit elkaar`);
+  }
+  for (const st of s.staff) {
+    if (!s.staffWalk.walkable[st.tile]) fail(`medewerker ${st.id} staat op niet-begaanbare tegel`);
+    const key = -1 - st.id;
+    const prev = lastTile.get(key);
+    if (prev !== undefined && prev !== st.tile) {
+      const d = Math.abs((prev % W) - (st.tile % W)) + Math.abs(Math.floor(prev / W) - Math.floor(st.tile / W));
+      if (d !== 1) fail(`medewerker ${st.id} sprong ${d} tegels`);
+    }
+    lastTile.set(key, st.tile);
+    if ((st.state === 'responding' || st.state === 'handling') && st.incidentId === null) fail(`medewerker ${st.id} helpt zonder melding`);
   }
 }
 
 describe('simulatie', () => {
   it('één bezoeker loopt via een geldige route naar één podium en kijkt', () => {
-    const input = exampleInput({ scenario: { ...S, visitorCount: 1 } });
+    const input = exampleInput({ visitors: 1 });
     const s = createSimulation(input);
     const v = s.visitors[0];
     const lastTile = new Map<number, number>();
@@ -65,7 +86,7 @@ describe('simulatie', () => {
   });
 
   it('volledige run met 150 bezoekers: geldige routes, correcte wachtrijen, iedereen vertrekt (criteria 3, 4, 9)', () => {
-    const s = createSimulation(exampleInput());
+    const s = createSimulation(exampleInput({ visitors: 150 }));
     expect(s.visitors).toHaveLength(150);
     const lastTile = new Map<number, number>();
     let maxOnSite = 0;
@@ -85,6 +106,14 @@ describe('simulatie', () => {
     }
     const served = Object.values(s.metrics.facility).reduce((a, f) => a + f.served, 0);
     expect(served).toBeGreaterThan(100);
+    // Verkoop, meldingen en medewerkers
+    expect(s.metrics.sales.bar).toBeGreaterThan(0);
+    expect(s.metrics.sales.food).toBeGreaterThan(0);
+    expect(s.metrics.sales.merch).toBeGreaterThan(0);
+    expect(s.incidents.length).toBeGreaterThan(0);
+    expect(s.incidents.every((i) => i.outcome !== 'open')).toBe(true);
+    expect(s.incidents.some((i) => i.outcome === 'handled' && i.arrivedTick !== null)).toBe(true);
+    expect(s.staff.every((st) => st.incidentId === null || st.state === 'returning' || st.state === 'idle')).toBe(true);
   }, 60_000);
 
   it('dezelfde seed en input geven exact hetzelfde resultaat (criterium 7)', () => {

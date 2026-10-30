@@ -3,7 +3,6 @@ import { buildOccupancy, inBounds, tileIndex, type FacilityShape } from './grid'
 import { validatePathPaint, validatePlacement, type PlacementResult } from './placement';
 import type { Facility, FacilityType, FestivalLayout, Program, ScenarioSettings } from './types';
 
-export { computeSpent, costBreakdown, countPathTiles, type BudgetLine } from './budget';
 
 function nextName(layout: FestivalLayout, type: FacilityType): string {
   const def = FACILITY_DEFS[type];
@@ -19,8 +18,9 @@ export function placeFacility(
   layout: FestivalLayout,
   scenario: ScenarioSettings,
   candidate: FacilityShape,
+  budget: number,
 ): { layout: FestivalLayout; result: PlacementResult; facility: Facility | null } {
-  const result = validatePlacement(layout, scenario, candidate);
+  const result = validatePlacement(layout, scenario, candidate, budget);
   if (!result.ok) return { layout, result, facility: null };
   const facility: Facility = {
     id: `f${layout.nextFacilityNumber}`,
@@ -41,8 +41,8 @@ export function removeFacility(layout: FestivalLayout, id: string): FestivalLayo
   return { ...layout, facilities: layout.facilities.filter((f) => f.id !== id) };
 }
 
-export function paintPath(layout: FestivalLayout, scenario: ScenarioSettings, x: number, y: number): FestivalLayout {
-  if (!validatePathPaint(layout, scenario, x, y).ok) return layout;
+export function paintPath(layout: FestivalLayout, scenario: ScenarioSettings, x: number, y: number, budget: number): FestivalLayout {
+  if (!validatePathPaint(layout, scenario, x, y, budget).ok) return layout;
   const tiles = layout.grid.tiles.slice();
   tiles[tileIndex(layout.grid, x, y)] = 'path';
   return { ...layout, grid: { ...layout.grid, tiles } };
@@ -74,7 +74,13 @@ export function pruneProgram(program: Program, layout: FestivalLayout, scenario:
 }
 
 /** Compacte vingerafdruk van ontwerp + programma + seed, om rapporten aan een versie te koppelen. */
-export function designSignature(layout: FestivalLayout, program: Program, seed: number, visitorCount: number): string {
+export function designSignature(
+  layout: FestivalLayout,
+  program: Program,
+  seed: number,
+  visitorCount: number,
+  ticketPrice: number,
+): string {
   const facilities = layout.facilities.map((f) => `${f.type}:${f.x},${f.y},${f.facing}`).join('|');
   const paths: number[] = [];
   layout.grid.tiles.forEach((t, i) => {
@@ -84,7 +90,7 @@ export function designSignature(layout: FestivalLayout, program: Program, seed: 
     .map((p) => `${p.stageId}@${p.slot}=${p.actId}`)
     .sort()
     .join('|');
-  const raw = `${facilities}#${paths.join(',')}#${perf}#${seed}#${visitorCount}`;
+  const raw = `${facilities}#${paths.join(',')}#${perf}#${seed}#${visitorCount}#${ticketPrice}`;
   let h = 0x811c9dc5;
   for (let i = 0; i < raw.length; i++) {
     h ^= raw.charCodeAt(i);

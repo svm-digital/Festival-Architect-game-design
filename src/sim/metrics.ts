@@ -1,10 +1,11 @@
+import { hasQueue, PRODUCTS } from '../model/catalog';
 import { TICKS_PER_MINUTE } from './clock';
 import type { FacilityStats, SimulationMetrics, SimulationState } from './types';
 
 export function createMetrics(tileCount: number, facilityIds: string[], stageIds: string[]): SimulationMetrics {
   const facility: Record<string, FacilityStats> = {};
   for (const id of facilityIds) {
-    facility[id] = { served: 0, abandoned: 0, totalWaitTicks: 0, maxQueue: 0, uses: 0, turnedAway: 0 };
+    facility[id] = { served: 0, completed: 0, abandoned: 0, totalWaitTicks: 0, maxQueue: 0, uses: 0, turnedAway: 0 };
   }
   const stageWatchMinutes: Record<string, number> = {};
   for (const id of stageIds) stageWatchMinutes[id] = 0;
@@ -12,10 +13,11 @@ export function createMetrics(tileCount: number, facilityIds: string[], stageIds
     samples: [],
     heat: new Float32Array(tileCount),
     facility,
-    noGoalVisitors: { food: [], toilet: [], seating: [] },
+    noGoalVisitors: { food: [], drink: [], toilet: [], seating: [] },
     stageWatchMinutes,
     walkTicksPath: 0,
     walkTicksGrass: 0,
+    sales: { food: 0, bar: 0, merch: 0 },
   };
 }
 
@@ -46,7 +48,7 @@ export function sampleMetrics(s: SimulationState): void {
   const queues: Record<string, number> = {};
   for (const id of s.facilityOrder) {
     const fac = s.facilities[id];
-    if (fac.type === 'food' || fac.type === 'toilet') queues[id] = fac.queue.length;
+    if (hasQueue(fac.type)) queues[id] = fac.queue.length;
   }
   for (let i = 0; i < counts.length; i++) m.heat[i] += counts[i];
 
@@ -81,7 +83,22 @@ export function sampleMetrics(s: SimulationState): void {
     watching,
     queues,
     noGoal,
+    openIncidents: s.incidents.filter((i) => i.outcome === 'open').length,
+    revenue: revenueSoFar(s),
     peakCount,
     peakTile,
   });
+}
+
+/** Omzet tot nu toe: tickets van gearriveerde bezoekers plus verkoop. */
+export function revenueSoFar(s: SimulationState): number {
+  let arrived = 0;
+  for (const v of s.visitors) if (v.phase !== 'pending') arrived++;
+  const sales = s.metrics.sales;
+  return (
+    arrived * s.input.demand.ticketPrice +
+    sales.food * PRODUCTS.food.price +
+    sales.bar * PRODUCTS.bar.price +
+    sales.merch * PRODUCTS.merch.price
+  );
 }

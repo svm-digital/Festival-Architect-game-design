@@ -163,3 +163,8 @@ export function pathFromField(walk: WalkGrid, field: Float32Array, start: number
   }
   return path;
 }
+
+/** Kopie met gelijke kosten per tegel (kortste aantal tegels). */
+export function uniformWalk(walk: WalkGrid): WalkGrid {
+  return { ...walk, enterCost: new Float32Array(walk.width * walk.height).fill(1) };
+}
